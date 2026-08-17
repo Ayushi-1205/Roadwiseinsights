@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ResponsiveContainer } from "recharts";
 
 export const axisProps = {
@@ -29,11 +29,17 @@ export const tooltipStyles = {
 } as const;
 
 export function ChartFrame({ height = 300, children }: { height?: number; children: ReactNode }) {
+  // Recharts measures its container, so it only renders meaningfully after hydration.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   return (
     <div style={{ height }} className="w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        {children as never}
-      </ResponsiveContainer>
+      {mounted ? (
+        <ResponsiveContainer width="100%" height="100%">
+          {children as never}
+        </ResponsiveContainer>
+      ) : null}
     </div>
   );
 }
