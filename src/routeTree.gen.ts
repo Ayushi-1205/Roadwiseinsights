@@ -14,6 +14,7 @@ import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as CausesRouteImport } from './routes/causes'
 import { Route as ConditionsRouteImport } from './routes/conditions'
 import { Route as HotspotsRouteImport } from './routes/hotspots'
+import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as VehiclesRouteImport } from './routes/vehicles'
 
 const IndexRoute = IndexRouteImport.update({
@@ -41,6 +42,11 @@ const HotspotsRoute = HotspotsRouteImport.update({
   path: '/hotspots',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReportsRoute = ReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const VehiclesRoute = VehiclesRouteImport.update({
   id: '/vehicles',
   path: '/vehicles',
@@ -53,6 +59,7 @@ export interface FileRoutesByFullPath {
   '/causes': typeof CausesRoute
   '/conditions': typeof ConditionsRoute
   '/hotspots': typeof HotspotsRoute
+  '/reports': typeof ReportsRoute
   '/vehicles': typeof VehiclesRoute
 }
 export interface FileRoutesByTo {
@@ -61,6 +68,7 @@ export interface FileRoutesByTo {
   '/causes': typeof CausesRoute
   '/conditions': typeof ConditionsRoute
   '/hotspots': typeof HotspotsRoute
+  '/reports': typeof ReportsRoute
   '/vehicles': typeof VehiclesRoute
 }
 export interface FileRoutesById {
@@ -70,14 +78,28 @@ export interface FileRoutesById {
   '/causes': typeof CausesRoute
   '/conditions': typeof ConditionsRoute
   '/hotspots': typeof HotspotsRoute
+  '/reports': typeof ReportsRoute
   '/vehicles': typeof VehiclesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/analytics' | '/causes' | '/conditions' | '/hotspots' | '/vehicles'
+    | '/'
+    | '/analytics'
+    | '/causes'
+    | '/conditions'
+    | '/hotspots'
+    | '/reports'
+    | '/vehicles'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/analytics' | '/causes' | '/conditions' | '/hotspots' | '/vehicles'
+  to:
+    | '/'
+    | '/analytics'
+    | '/causes'
+    | '/conditions'
+    | '/hotspots'
+    | '/reports'
+    | '/vehicles'
   id:
     | '__root__'
     | '/'
@@ -85,6 +107,7 @@ export interface FileRouteTypes {
     | '/causes'
     | '/conditions'
     | '/hotspots'
+    | '/reports'
     | '/vehicles'
   fileRoutesById: FileRoutesById
 }
@@ -94,6 +117,7 @@ export interface RootRouteChildren {
   CausesRoute: typeof CausesRoute
   ConditionsRoute: typeof ConditionsRoute
   HotspotsRoute: typeof HotspotsRoute
+  ReportsRoute: typeof ReportsRoute
   VehiclesRoute: typeof VehiclesRoute
 }
 
@@ -134,6 +158,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HotspotsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/reports': {
+      id: '/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/vehicles': {
       id: '/vehicles'
       path: '/vehicles'
@@ -150,6 +181,7 @@ const rootRouteChildren: RootRouteChildren = {
   CausesRoute: CausesRoute,
   ConditionsRoute: ConditionsRoute,
   HotspotsRoute: HotspotsRoute,
+  ReportsRoute: ReportsRoute,
   VehiclesRoute: VehiclesRoute,
 }
 export const routeTree = rootRouteImport
