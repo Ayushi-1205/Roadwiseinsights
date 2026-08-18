@@ -246,11 +246,13 @@ function AnalyticsPage() {
             </defs>
             <CartesianGrid {...gridProps} />
             <XAxis dataKey="period" {...axisProps} />
-            <YAxis {...axisProps} width={62} />
+            <YAxis yAxisId="left" {...axisProps} width={62} />
+            <YAxis yAxisId="right" orientation="right" {...axisProps} width={54} />
             <Tooltip {...tooltipStyles} />
             <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
             <Area
               type="monotone"
+              yAxisId="left"
               dataKey="accidents"
               name="Accidents"
               stroke="var(--color-chart-1)"
@@ -260,6 +262,7 @@ function AnalyticsPage() {
             />
             <Area
               type="monotone"
+              yAxisId="left"
               dataKey="injuries"
               name="Injuries"
               stroke="var(--color-chart-2)"
@@ -269,6 +272,7 @@ function AnalyticsPage() {
             />
             <Line
               type="monotone"
+              yAxisId="right"
               dataKey="fatalities"
               name="Fatalities"
               stroke="var(--color-chart-3)"
