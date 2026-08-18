@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Area,
-  AreaChart,
+  ComposedChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -233,7 +233,7 @@ function AnalyticsPage() {
         }
       >
         <ChartFrame height={360}>
-          <AreaChart data={trend} margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
+          <ComposedChart data={trend} margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
             <defs>
               <linearGradient id="aaAccidents" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="var(--color-chart-1)" stopOpacity={0.45} />
@@ -276,7 +276,7 @@ function AnalyticsPage() {
               dot={false}
               animationDuration={1100}
             />
-          </AreaChart>
+          </ComposedChart>
         </ChartFrame>
       </Panel>
 
