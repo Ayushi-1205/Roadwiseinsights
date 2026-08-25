@@ -19,7 +19,6 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   CalendarRange,
-  Download,
   Info,
   MapPin,
   RotateCcw,
@@ -58,13 +57,13 @@ import {
 export const Route = createFileRoute("/analytics")({
   head: () => ({
     meta: [
-      { title: "Accident Analytics — SafeRoadIQ" },
+      { title: "Accident analytics — SafeRoadIQ" },
       {
         name: "description",
         content:
           "Explore accident patterns, severity, trends and risk factors across the monitored road network.",
       },
-      { property: "og:title", content: "Accident Analytics — SafeRoadIQ" },
+      { property: "og:title", content: "Accident analytics — SafeRoadIQ" },
       {
         property: "og:description",
         content:
@@ -158,17 +157,13 @@ function AnalyticsPage() {
     <AppShell>
       <PageHeader
         eyebrow="Analytical workspace"
-        title="Accident Analytics"
+        title="Accident analytics"
         description="Explore accident patterns, severity, trends and risk factors across the monitored network."
         action={
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => setFilters(filterDefaults)}>
               <RotateCcw className="h-4 w-4" />
               Reset filters
-            </Button>
-            <Button size="sm">
-              <Download className="h-4 w-4" />
-              Export
             </Button>
           </div>
         }
