@@ -19,7 +19,6 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   CalendarRange,
-  Download,
   Info,
   MapPin,
   RotateCcw,
@@ -58,13 +57,13 @@ import {
 export const Route = createFileRoute("/analytics")({
   head: () => ({
     meta: [
-      { title: "Accident Analytics — SafeRoadIQ" },
+      { title: "Accident analytics — SafeRoadIQ" },
       {
         name: "description",
         content:
           "Explore accident patterns, severity, trends and risk factors across the monitored road network.",
       },
-      { property: "og:title", content: "Accident Analytics — SafeRoadIQ" },
+      { property: "og:title", content: "Accident analytics — SafeRoadIQ" },
       {
         property: "og:description",
         content:
