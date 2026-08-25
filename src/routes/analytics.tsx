@@ -158,17 +158,13 @@ function AnalyticsPage() {
     <AppShell>
       <PageHeader
         eyebrow="Analytical workspace"
-        title="Accident Analytics"
+        title="Accident analytics"
         description="Explore accident patterns, severity, trends and risk factors across the monitored network."
         action={
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => setFilters(filterDefaults)}>
               <RotateCcw className="h-4 w-4" />
               Reset filters
-            </Button>
-            <Button size="sm">
-              <Download className="h-4 w-4" />
-              Export
             </Button>
           </div>
         }
