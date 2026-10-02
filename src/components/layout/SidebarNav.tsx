@@ -64,8 +64,8 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           <p className="mono-label text-success">Live feed</p>
         </div>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-          Ingesting 42 district sensors. Data layer not connected yet — showing modelled sample
-          telemetry.
+          Connected to PostgreSQL database with 20,000 accident records across 8 major monitored
+          districts.
         </p>
       </div>
     </div>

@@ -438,7 +438,7 @@ function ReportsPage() {
               </Button>
             </div>
             <p className="mt-3 text-[11px] text-muted-foreground">
-              Scheduled delivery and email sharing are not yet connected to a data layer.
+              Scheduled delivery and automated email distribution are currently unavailable.
             </p>
           </Panel>
         </div>
