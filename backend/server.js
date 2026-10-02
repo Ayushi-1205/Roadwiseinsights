@@ -990,15 +990,31 @@ app.get("/api/reports/summary", async (req, res) => {
   try {
     client = await pool.connect();
 
-    const [totalRes, sevRes, causeRes, cityRes, weekRes] = await Promise.all([
-      client.query("SELECT COUNT(*)::int AS total, COALESCE(SUM(casualties),0)::int AS total_casualties, COUNT(CASE WHEN accident_severity='fatal' THEN 1 END)::int AS total_fatalities FROM public.accident"),
-      client.query("SELECT accident_severity AS severity, COUNT(*)::int AS incidents, ROUND(COUNT(*)*100.0/20000.0,2)::float AS share_pct FROM public.accident GROUP BY 1 ORDER BY incidents DESC"),
-      client.query("SELECT cause, COUNT(*)::int AS incidents, ROUND(COUNT(*)*100.0/20000.0,2)::float AS share_pct FROM public.accident GROUP BY 1 ORDER BY incidents DESC"),
-      client.query("SELECT city, COUNT(*)::int AS incidents, ROUND(COUNT(*)*100.0/20000.0,2)::float AS share_pct FROM public.accident GROUP BY 1 ORDER BY incidents DESC"),
-      client.query("SELECT CASE WHEN is_weekend THEN 'Weekend' ELSE 'Weekday' END AS period, COUNT(*)::int AS incidents, ROUND(COUNT(*)*100.0/20000.0,2)::float AS share_pct FROM public.accident GROUP BY is_weekend ORDER BY incidents DESC"),
+    const totalRes = await client.query(
+      "SELECT COUNT(*)::int AS total, COALESCE(SUM(casualties),0)::int AS total_casualties, COUNT(CASE WHEN accident_severity='fatal' THEN 1 END)::int AS total_fatalities FROM public.accident"
+    );
+    const summary = totalRes.rows[0];
+    const total = summary.total || 0;
+
+    const [sevRes, causeRes, cityRes, weekRes] = await Promise.all([
+      client.query(
+        "SELECT accident_severity AS severity, COUNT(*)::int AS incidents, CASE WHEN $1 > 0 THEN ROUND(COUNT(*)*100.0/$1, 2)::float ELSE 0 END AS share_pct FROM public.accident GROUP BY 1 ORDER BY incidents DESC",
+        [total]
+      ),
+      client.query(
+        "SELECT cause, COUNT(*)::int AS incidents, CASE WHEN $1 > 0 THEN ROUND(COUNT(*)*100.0/$1, 2)::float ELSE 0 END AS share_pct FROM public.accident GROUP BY 1 ORDER BY incidents DESC",
+        [total]
+      ),
+      client.query(
+        "SELECT city, COUNT(*)::int AS incidents, CASE WHEN $1 > 0 THEN ROUND(COUNT(*)*100.0/$1, 2)::float ELSE 0 END AS share_pct FROM public.accident GROUP BY 1 ORDER BY incidents DESC",
+        [total]
+      ),
+      client.query(
+        "SELECT CASE WHEN is_weekend THEN 'Weekend' ELSE 'Weekday' END AS period, COUNT(*)::int AS incidents, CASE WHEN $1 > 0 THEN ROUND(COUNT(*)*100.0/$1, 2)::float ELSE 0 END AS share_pct FROM public.accident GROUP BY is_weekend ORDER BY incidents DESC",
+        [total]
+      ),
     ]);
 
-    const summary = totalRes.rows[0];
 
     res.json({
       success: true,
