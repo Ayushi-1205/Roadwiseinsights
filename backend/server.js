@@ -158,18 +158,89 @@ app.get("/api/dashboard", async (req, res) => {
 });
 
 // Time & Trend Analytics API
+// Supports query params: city, severity, cause, dateRange
 async function handleTrends(req, res) {
   let client;
 
   try {
     client = await pool.connect();
 
+    // ── Parse filter query params ───────────────────────────────────────────
+    const { city, severity, cause, dateRange } = req.query;
+
+    // Build a dynamic WHERE clause shared by all filtered queries.
+    // We collect conditions and params, reserving $1 for totalAccidents later.
+    // For filtered queries, params start at $1.
+    const filterConditions = [];
+    const filterParams = [];
+
+    if (city && city !== "All districts") {
+      filterParams.push(city);
+      filterConditions.push(`city = $${filterParams.length}`);
+    }
+
+    if (severity && severity !== "All severities") {
+      filterParams.push(severity.toLowerCase());
+      filterConditions.push(`LOWER(accident_severity) = $${filterParams.length}`);
+    }
+
+    if (cause && cause !== "All types") {
+      filterParams.push(cause.toLowerCase());
+      filterConditions.push(`LOWER(cause) = $${filterParams.length}`);
+    }
+
+    // Date range filter — mapped to actual date column bounds
+    if (dateRange && dateRange !== "All time") {
+      let interval = null;
+      if (dateRange === "Last 30 days") interval = "30 days";
+      else if (dateRange === "Last 90 days") interval = "90 days";
+      else if (dateRange === "Last 12 months") interval = "12 months";
+      else if (dateRange === "Year to date") interval = null; // handled separately
+
+      if (dateRange === "Year to date") {
+        filterConditions.push(`date >= DATE_TRUNC('year', CURRENT_DATE)`);
+        // Fallback: use max date in dataset as anchor since data may not extend to today
+        // Use dataset's max year start instead
+        filterConditions.push(`date >= DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))`);
+        // Remove the duplicate; use dataset max year
+        filterConditions.pop();
+        filterConditions.pop();
+        filterConditions.push(
+          `DATE_TRUNC('year', date) = DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))`
+        );
+      } else if (interval) {
+        filterConditions.push(
+          `date >= (SELECT MAX(date) - INTERVAL '${interval}' FROM public.accident)`
+        );
+      }
+    }
+
+    const hasFilters = filterConditions.length > 0;
+    const whereClause = hasFilters
+      ? "WHERE " + filterConditions.join(" AND ")
+      : "";
+    // Base WHERE for queries that already have their own fixed conditions:
+    const andClause = hasFilters
+      ? "AND " + filterConditions.join(" AND ")
+      : "";
+
+    // ── Filtered total (denominator for shares within filtered set) ─────────
+    const filteredTotalRes = await client.query(
+      `SELECT COUNT(*)::int AS total FROM public.accident ${whereClause}`,
+      filterParams
+    );
+    const filteredTotal = filteredTotalRes.rows[0]?.total || 0;
+
+    // Unfiltered total — always 20 000, used for filter_options label badge
     const totalCountRes = await client.query("SELECT COUNT(*)::int AS total FROM public.accident");
     const totalAccidents = totalCountRes.rows[0]?.total || 0;
 
-    // 1. Time-series trends
-    // Daily (last 30 days of dataset)
-    const dailyRes = await client.query(`
+    // ── 1. Time-series trends (always computed on filtered set) ─────────────
+
+    // Daily — last 30 days of the FILTERED set
+    const dailyParams = [...filterParams];
+    const dailyRes = await client.query(
+      `
       SELECT 
         TO_CHAR(date, 'DD Mon') AS period,
         TO_CHAR(date, 'YYYY-MM-DD') AS date_key,
@@ -177,13 +248,19 @@ async function handleTrends(req, res) {
         COALESCE(SUM(casualties), 0)::int AS injuries,
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatalities
       FROM public.accident
-      WHERE date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident)
+      WHERE date >= (
+        SELECT MAX(date) - INTERVAL '30 days'
+        FROM public.accident ${whereClause}
+      ) ${andClause}
       GROUP BY date
       ORDER BY date
-    `);
+    `,
+      dailyParams
+    );
 
-    // Monthly (chronological monthly rollup across dataset)
-    const monthlyRes = await client.query(`
+    // Monthly
+    const monthlyRes = await client.query(
+      `
       SELECT 
         TO_CHAR(DATE_TRUNC('month', date), 'Mon YYYY') AS period,
         TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') AS month_key,
@@ -192,13 +269,16 @@ async function handleTrends(req, res) {
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatalities,
         ROUND(COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1)::float AS "fatalityRate"
       FROM public.accident
-      WHERE date IS NOT NULL
+      WHERE date IS NOT NULL ${andClause}
       GROUP BY DATE_TRUNC('month', date)
       ORDER BY DATE_TRUNC('month', date)
-    `);
+    `,
+      filterParams
+    );
 
-    // Yearly (chronological yearly rollup)
-    const yearlyRes = await client.query(`
+    // Yearly
+    const yearlyRes = await client.query(
+      `
       SELECT 
         TO_CHAR(DATE_TRUNC('year', date), 'YYYY') AS period,
         COUNT(*)::int AS accidents,
@@ -206,25 +286,29 @@ async function handleTrends(req, res) {
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatalities,
         ROUND(COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1)::float AS "fatalityRate"
       FROM public.accident
-      WHERE date IS NOT NULL
+      WHERE date IS NOT NULL ${andClause}
       GROUP BY DATE_TRUNC('year', date)
       ORDER BY DATE_TRUNC('year', date)
-    `);
+    `,
+      filterParams
+    );
 
-    // 2. District/City Ranking
+    // ── 2. District/City Ranking ────────────────────────────────────────────
+    const districtParams = [...filterParams, filteredTotal];
+    const districtTotalIdx = districtParams.length; // $N for filteredTotal
     const districtRes = await client.query(
       `
       SELECT 
         city AS district,
         COUNT(*)::int AS accidents,
-        CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share,
+        CASE WHEN $${districtTotalIdx} > 0 THEN ROUND(COUNT(*) * 100.0 / $${districtTotalIdx}, 1)::float ELSE 0 END AS share,
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatal_count
       FROM public.accident
-      WHERE city IS NOT NULL AND TRIM(city) <> ''
+      WHERE city IS NOT NULL AND TRIM(city) <> '' ${andClause}
       GROUP BY city
       ORDER BY accidents DESC
     `,
-      [totalAccidents]
+      districtParams
     );
 
     const districtRanking = districtRes.rows.map((row) => ({
@@ -234,28 +318,30 @@ async function handleTrends(req, res) {
       fatalCount: row.fatal_count,
     }));
 
-    // 3. Severity Breakdown
+    // ── 3. Severity Breakdown ───────────────────────────────────────────────
     const severityColors = {
       minor: "var(--color-chart-5)",
       major: "var(--color-chart-1)",
       fatal: "var(--color-chart-3)",
     };
 
+    const severityParams = [...filterParams, filteredTotal];
+    const severityTotalIdx = severityParams.length;
     const severityRes = await client.query(
       `
       SELECT 
         INITCAP(accident_severity) AS name,
         LOWER(accident_severity) AS raw_severity,
         COUNT(*)::int AS incidents,
-        CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share,
+        CASE WHEN $${severityTotalIdx} > 0 THEN ROUND(COUNT(*) * 100.0 / $${severityTotalIdx}, 1)::float ELSE 0 END AS share,
         ROUND(COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1)::float AS "fatalityRate",
         ROUND(COALESCE(SUM(casualties), 0) * 1.0 / NULLIF(COUNT(*), 0), 2)::float AS "avgCasualties"
       FROM public.accident
-      WHERE accident_severity IS NOT NULL
+      WHERE accident_severity IS NOT NULL ${andClause}
       GROUP BY accident_severity
       ORDER BY incidents DESC
     `,
-      [totalAccidents]
+      severityParams
     );
 
     const severityBreakdown = severityRes.rows.map((row) => ({
@@ -267,7 +353,9 @@ async function handleTrends(req, res) {
       color: severityColors[row.raw_severity] || "var(--color-chart-2)",
     }));
 
-    // 4. Hourly pattern (00:00 to 23:00)
+    // ── 4. Hourly pattern ───────────────────────────────────────────────────
+    const hourlyParams = [...filterParams, filteredTotal];
+    const hourlyTotalIdx = hourlyParams.length;
     const hourlyRes = await client.query(
       `
       SELECT 
@@ -275,16 +363,18 @@ async function handleTrends(req, res) {
         hour::int AS hour_num,
         COUNT(*)::int AS accidents,
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatalities,
-        CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 2)::float ELSE 0 END AS share
+        CASE WHEN $${hourlyTotalIdx} > 0 THEN ROUND(COUNT(*) * 100.0 / $${hourlyTotalIdx}, 2)::float ELSE 0 END AS share
       FROM public.accident
-      WHERE hour IS NOT NULL
+      WHERE hour IS NOT NULL ${andClause}
       GROUP BY hour
       ORDER BY hour
     `,
-      [totalAccidents]
+      hourlyParams
     );
 
-    // 5. Day of week pattern
+    // ── 5. Day of week pattern ──────────────────────────────────────────────
+    const weekdayParams = [...filterParams, filteredTotal];
+    const weekdayTotalIdx = weekdayParams.length;
     const weekdayRes = await client.query(
       `
       SELECT 
@@ -293,9 +383,9 @@ async function handleTrends(req, res) {
         COUNT(*)::int AS accidents,
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatalities,
         ROUND(COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1)::float AS "fatalityRate",
-        CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share
+        CASE WHEN $${weekdayTotalIdx} > 0 THEN ROUND(COUNT(*) * 100.0 / $${weekdayTotalIdx}, 1)::float ELSE 0 END AS share
       FROM public.accident
-      WHERE day_of_week IS NOT NULL
+      WHERE day_of_week IS NOT NULL ${andClause}
       GROUP BY day_of_week
       ORDER BY CASE day_of_week
         WHEN 'Monday' THEN 1
@@ -307,29 +397,32 @@ async function handleTrends(req, res) {
         WHEN 'Sunday' THEN 7
         ELSE 8 END
     `,
-      [totalAccidents]
+      weekdayParams
     );
 
-    // 6. Weekend vs Weekday comparison
+    // ── 6. Weekend vs Weekday comparison ────────────────────────────────────
+    const weekendParams = [...filterParams, filteredTotal];
+    const weekendTotalIdx = weekendParams.length;
     const weekendRes = await client.query(
       `
       SELECT 
         is_weekend,
         CASE WHEN is_weekend = true THEN 'Weekend' ELSE 'Weekday' END AS category,
         COUNT(*)::int AS accidents,
-        CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share,
+        CASE WHEN $${weekendTotalIdx} > 0 THEN ROUND(COUNT(*) * 100.0 / $${weekendTotalIdx}, 1)::float ELSE 0 END AS share,
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatalities,
         ROUND(COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1)::float AS "fatalityRate",
         COALESCE(SUM(casualties), 0)::int AS casualties,
         ROUND(AVG(casualties), 2)::float AS "avgCasualties"
       FROM public.accident
+      ${whereClause}
       GROUP BY is_weekend
       ORDER BY is_weekend DESC
     `,
-      [totalAccidents]
+      weekendParams
     );
 
-    // 7. Accident Causes / Classification
+    // ── 7. Accident Causes / Classification ─────────────────────────────────
     const typeColors = [
       "var(--color-chart-1)",
       "var(--color-chart-2)",
@@ -339,20 +432,22 @@ async function handleTrends(req, res) {
       "var(--color-muted-foreground)",
     ];
 
+    const causesParams = [...filterParams, filteredTotal];
+    const causesTotalIdx = causesParams.length;
     const causesRes = await client.query(
       `
       SELECT 
         INITCAP(cause) AS type,
         COUNT(*)::int AS incidents,
-        CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share,
+        CASE WHEN $${causesTotalIdx} > 0 THEN ROUND(COUNT(*) * 100.0 / $${causesTotalIdx}, 1)::float ELSE 0 END AS share,
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatalities,
         ROUND(COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1)::float AS "fatalityRate"
       FROM public.accident
-      WHERE cause IS NOT NULL AND TRIM(cause) <> ''
+      WHERE cause IS NOT NULL AND TRIM(cause) <> '' ${andClause}
       GROUP BY cause
       ORDER BY incidents DESC
     `,
-      [totalAccidents]
+      causesParams
     );
 
     const accidentTypes = causesRes.rows.map((row, idx) => ({
@@ -364,17 +459,15 @@ async function handleTrends(req, res) {
       color: typeColors[idx % typeColors.length],
     }));
 
-    // 8. Key observations derived from database extremes
-    const peakHour = hourlyRes.rows.reduce(
-      (a, b) => (b.accidents > a.accidents ? b : a),
-      hourlyRes.rows[0]
-    );
-    const peakCity = districtRanking[0];
+    // ── 8. Key observations ──────────────────────────────────────────────────
+    const peakHour = hourlyRes.rows.length
+      ? hourlyRes.rows.reduce((a, b) => (b.accidents > a.accidents ? b : a), hourlyRes.rows[0])
+      : null;
+    const peakCity = districtRanking[0] || null;
     const fatalRow = severityBreakdown.find((s) => s.name.toLowerCase() === "fatal");
-    const peakDay = weekdayRes.rows.reduce(
-      (a, b) => (b.accidents > a.accidents ? b : a),
-      weekdayRes.rows[0]
-    );
+    const peakDay = weekdayRes.rows.length
+      ? weekdayRes.rows.reduce((a, b) => (b.accidents > a.accidents ? b : a), weekdayRes.rows[0])
+      : null;
     const weekendRow = weekendRes.rows.find((w) => w.is_weekend === true);
     const weekdayRow = weekendRes.rows.find((w) => w.is_weekend === false);
 
@@ -382,51 +475,67 @@ async function handleTrends(req, res) {
       {
         id: "I-1",
         tone: "critical",
-        headline: `Hourly volume peaks at ${peakHour?.hour || "02:00"}`,
-        detail: `Hour ${peakHour?.hour} records ${peakHour?.accidents.toLocaleString()} incidents across the road network.`,
-        metric: `${peakHour?.accidents.toLocaleString()} incidents`,
+        headline: `Hourly volume peaks at ${peakHour?.hour || "—"}`,
+        detail: peakHour
+          ? `Hour ${peakHour.hour} records ${peakHour.accidents.toLocaleString()} incidents in the selected dataset.`
+          : "No hourly data for the current filter selection.",
+        metric: peakHour ? `${peakHour.accidents.toLocaleString()} incidents` : "—",
       },
       {
         id: "I-2",
         tone: "warning",
-        headline: `${peakCity?.district || "Chandigarh"} leads in total recorded volume`,
-        detail: `${peakCity?.district} accounts for ${peakCity?.accidents.toLocaleString()} incidents (${peakCity?.share}% of total network volume).`,
-        metric: `${peakCity?.share}% share`,
+        headline: peakCity ? `${peakCity.district} leads in recorded volume` : "No city data",
+        detail: peakCity
+          ? `${peakCity.district} accounts for ${peakCity.accidents.toLocaleString()} incidents (${peakCity.share}% of filtered total).`
+          : "No district data for the current filter selection.",
+        metric: peakCity ? `${peakCity.share}% share` : "—",
       },
       {
         id: "I-3",
         tone: "info",
         headline: "Fatal incidents represent critical severity impact",
-        detail: `Fatal crashes constitute ${fatalRow?.share || 14.9}% of total accidents with ${fatalRow?.incidents.toLocaleString() || 0} fatal outcomes recorded.`,
-        metric: `${fatalRow?.share || 0}% of volume`,
+        detail: fatalRow
+          ? `Fatal crashes constitute ${fatalRow.share}% of filtered accidents with ${fatalRow.incidents.toLocaleString()} fatal outcomes recorded.`
+          : "No fatal severity data for the current filter.",
+        metric: fatalRow ? `${fatalRow.share}% of volume` : "—",
       },
       {
         id: "I-4",
         tone: "warning",
-        headline: `Weekly volume peaks on ${peakDay?.day || "Monday"}`,
-        detail: `${peakDay?.day} records ${peakDay?.accidents.toLocaleString()} incidents and ${peakDay?.fatalities.toLocaleString()} fatalities.`,
-        metric: `${peakDay?.accidents.toLocaleString()} incidents`,
+        headline: peakDay ? `Weekly volume peaks on ${peakDay.day}` : "No day-of-week data",
+        detail: peakDay
+          ? `${peakDay.day} records ${peakDay.accidents.toLocaleString()} incidents and ${peakDay.fatalities.toLocaleString()} fatalities.`
+          : "No day-of-week data for the current filter.",
+        metric: peakDay ? `${peakDay.accidents.toLocaleString()} incidents` : "—",
       },
       {
         id: "I-5",
         tone: "positive",
         headline: "Weekend vs Weekday volume distribution",
-        detail: `Weekdays record ${weekdayRow?.accidents.toLocaleString()} (${weekdayRow?.share}%) incidents while weekends record ${weekendRow?.accidents.toLocaleString()} (${weekendRow?.share}%).`,
-        metric: `${weekendRow?.share}% weekend`,
+        detail:
+          weekdayRow && weekendRow
+            ? `Weekdays record ${weekdayRow.accidents.toLocaleString()} (${weekdayRow.share}%) incidents while weekends record ${weekendRow.accidents.toLocaleString()} (${weekendRow.share}%).`
+            : "Weekend/weekday split not available for the current filter.",
+        metric: weekendRow ? `${weekendRow.share}% weekend` : "—",
       },
     ];
 
-    // Filter options based on real distinct values
+    // ── Filter options (always from the full unfiltered dataset) ────────────
     const distinctCities = await client.query(
       "SELECT DISTINCT city FROM public.accident WHERE city IS NOT NULL ORDER BY city"
     );
     const distinctSeverities = await client.query(
       "SELECT DISTINCT accident_severity FROM public.accident WHERE accident_severity IS NOT NULL ORDER BY accident_severity"
     );
+    const distinctCauses = await client.query(
+      "SELECT DISTINCT INITCAP(cause) AS cause FROM public.accident WHERE cause IS NOT NULL AND TRIM(cause) <> '' ORDER BY 1"
+    );
 
     res.json({
       success: true,
-      total_accidents: totalAccidents,
+      total_accidents: filteredTotal,
+      unfiltered_total: totalAccidents,
+      filtered: hasFilters,
       trends: {
         daily: dailyRes.rows,
         monthly: monthlyRes.rows,
@@ -440,7 +549,7 @@ async function handleTrends(req, res) {
       accident_types: accidentTypes,
       key_insights: keyInsights,
       filter_options: {
-        dateRanges: ["Last 30 days", "Last 90 days", "Last 12 months", "Year to date", "All time"],
+        dateRanges: ["All time", "Last 30 days", "Last 90 days", "Last 12 months", "Year to date"],
         districts: ["All districts", ...distinctCities.rows.map((r) => r.city)],
         severities: [
           "All severities",
@@ -449,7 +558,7 @@ async function handleTrends(req, res) {
               r.accident_severity.charAt(0).toUpperCase() + r.accident_severity.slice(1)
           ),
         ],
-        accidentTypes: ["All types", ...accidentTypes.map((t) => t.type)],
+        accidentTypes: ["All types", ...distinctCauses.rows.map((r) => r.cause)],
       },
     });
   } catch (error) {

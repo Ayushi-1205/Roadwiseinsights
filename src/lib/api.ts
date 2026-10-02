@@ -10,8 +10,20 @@ export async function getDashboard() {
   return response.json();
 }
 
-export async function getAnalytics() {
-  const response = await fetch(`${API_URL}/api/analytics`);
+export async function getAnalytics(params?: {
+  city?: string;
+  severity?: string;
+  cause?: string;
+  dateRange?: string;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.city && params.city !== "All districts") qs.set("city", params.city);
+  if (params?.severity && params.severity !== "All severities") qs.set("severity", params.severity);
+  if (params?.cause && params.cause !== "All types") qs.set("cause", params.cause);
+  if (params?.dateRange && params.dateRange !== "All time") qs.set("dateRange", params.dateRange);
+
+  const url = `${API_URL}/api/analytics${qs.toString() ? "?" + qs.toString() : ""}`;
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Failed to load analytics data");
   }

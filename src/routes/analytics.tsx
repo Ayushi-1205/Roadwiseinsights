@@ -204,9 +204,17 @@ const insightTone = {
 function AnalyticsPage() {
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [filters, setFilters] = useState(defaultFilterDefaults);
+  // appliedFilters drives actual API fetches; only updated when user clicks Apply
+  const [appliedFilters, setAppliedFilters] = useState(defaultFilterDefaults);
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const isDirty =
+    filters.dateRange !== appliedFilters.dateRange ||
+    filters.district !== appliedFilters.district ||
+    filters.severity !== appliedFilters.severity ||
+    filters.accidentType !== appliedFilters.accidentType;
 
   useEffect(() => {
     let cancelled = false;
@@ -216,7 +224,12 @@ function AnalyticsPage() {
         setLoading(true);
         setError(null);
 
-        const res = await getAnalytics();
+        const res = await getAnalytics({
+          city: appliedFilters.district,
+          severity: appliedFilters.severity,
+          cause: appliedFilters.accidentType,
+          dateRange: appliedFilters.dateRange,
+        });
         if (cancelled) return;
 
         if (res && res.success) {
@@ -242,7 +255,7 @@ function AnalyticsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [appliedFilters]);
 
   const setFilter = (k: keyof typeof defaultFilterDefaults) => (v: string) =>
     setFilters((f) => ({ ...f, [k]: v }));
@@ -304,7 +317,10 @@ function AnalyticsPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setFilters(defaultFilterDefaults)}
+              onClick={() => {
+                setFilters(defaultFilterDefaults);
+                setAppliedFilters(defaultFilterDefaults);
+              }}
             >
               <RotateCcw className="h-4 w-4" />
               Reset filters
@@ -359,11 +375,23 @@ function AnalyticsPage() {
             options={filterOptions.accidentTypes}
             onChange={setFilter("accidentType")}
           />
+          <div className="flex shrink-0 items-end gap-2">
+            <Button
+              size="sm"
+              disabled={loading || !isDirty}
+              onClick={() => setAppliedFilters({ ...filters })}
+            >
+              Apply filters
+            </Button>
+          </div>
         </div>
         <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
           <CalendarRange className="h-3.5 w-3.5 text-primary" />
-          Monitored dataset · {filters.dateRange} · {filters.district} · {filters.severity} ·{" "}
-          {filters.accidentType}
+          {isDirty ? (
+            <span className="text-yellow-600 dark:text-yellow-400">Pending changes — click Apply to update charts</span>
+          ) : (
+            <>Active: {appliedFilters.dateRange} · {appliedFilters.district} · {appliedFilters.severity} · {appliedFilters.accidentType}</>
+          )}
         </p>
       </section>
 
