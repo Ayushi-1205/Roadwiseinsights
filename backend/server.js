@@ -59,29 +59,59 @@ const PORT = process.env.PORT || 5000;
 
 
 // Dashboard data
+// Supports query param: dateRange ('All time', 'Last 30 days', 'Last 90 days', 'Last 12 months', 'Year to date')
 app.get("/api/dashboard", async (req, res) => {
   let client;
 
   try {
     client = await pool.connect();
+    const { dateRange } = req.query;
+
+    let dateFilterClause = "";
+    if (dateRange && dateRange !== "All time") {
+      if (dateRange === "Last 30 days") {
+        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident)";
+      } else if (dateRange === "Last 90 days") {
+        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '90 days' FROM public.accident)";
+      } else if (dateRange === "Last 12 months") {
+        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '12 months' FROM public.accident)";
+      } else if (dateRange === "Year to date") {
+        dateFilterClause = "DATE_TRUNC('year', date) = DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))";
+      }
+    }
+
+    const whereClause = dateFilterClause ? `WHERE ${dateFilterClause}` : "";
+    const andClause = dateFilterClause ? `AND ${dateFilterClause}` : "";
 
     const [summaryResult, severityResult, causeResult, hourlyResult, trendResult] = await Promise.all([
       client.query(`
         SELECT
           COUNT(*)::int AS total_accidents,
           COALESCE(SUM(casualties), 0)::int AS total_casualties,
+          ROUND(COALESCE(SUM(casualties), 0) * 1.0 / NULLIF(COUNT(*), 0), 2)::float AS avg_casualties,
           COUNT(*) FILTER (WHERE accident_severity = 'fatal')::int AS fatalities,
           COUNT(*) FILTER (WHERE accident_severity = 'major')::int AS major_accidents,
           COUNT(*) FILTER (WHERE accident_severity = 'minor')::int AS minor_accidents,
           COUNT(*) FILTER (WHERE date IS NULL)::int AS records_without_date,
-          COUNT(*) FILTER (WHERE hour IS NULL)::int AS records_without_hour
+          COUNT(*) FILTER (WHERE hour IS NULL)::int AS records_without_hour,
+          (
+            SELECT COUNT(*)::int
+            FROM (
+              SELECT city, state, road_type
+              FROM public.accident
+              ${whereClause ? whereClause + " AND" : "WHERE"} latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180
+              GROUP BY city, state, road_type
+            ) hs
+          ) AS active_hotspots
         FROM public.accident
+        ${whereClause}
       `),
       client.query(`
         SELECT
           COALESCE(NULLIF(TRIM(accident_severity), ''), 'unknown') AS severity,
           COUNT(*)::int AS count
         FROM public.accident
+        ${whereClause}
         GROUP BY 1
         ORDER BY count DESC, severity
       `),
@@ -90,6 +120,7 @@ app.get("/api/dashboard", async (req, res) => {
           COALESCE(NULLIF(TRIM(cause), ''), 'unknown') AS cause,
           COUNT(*)::int AS count
         FROM public.accident
+        ${whereClause}
         GROUP BY 1
         ORDER BY count DESC, cause
       `),
@@ -97,6 +128,7 @@ app.get("/api/dashboard", async (req, res) => {
         SELECT hour, COUNT(*)::int AS count
         FROM public.accident
         WHERE hour IS NOT NULL
+        ${andClause}
         GROUP BY hour
         ORDER BY hour
       `),
@@ -108,6 +140,7 @@ app.get("/api/dashboard", async (req, res) => {
           COUNT(*) FILTER (WHERE accident_severity = 'fatal')::int AS fatalities
         FROM public.accident
         WHERE date IS NOT NULL
+        ${andClause}
         GROUP BY DATE_TRUNC('month', date)
         ORDER BY DATE_TRUNC('month', date)
       `),
@@ -120,7 +153,9 @@ app.get("/api/dashboard", async (req, res) => {
       summary: {
         total_accidents: summary.total_accidents,
         total_casualties: summary.total_casualties,
+        avg_casualties: summary.avg_casualties,
         fatalities: summary.fatalities,
+        active_hotspots: summary.active_hotspots,
         major_accidents: summary.major_accidents,
         minor_accidents: summary.minor_accidents,
         records_without_date: summary.records_without_date,
@@ -145,12 +180,65 @@ app.get("/api/dashboard", async (req, res) => {
         fatalities: row.fatalities,
       })),
     });
-  } catch {
-    console.error("Dashboard API request failed.");
+  } catch (error) {
+    console.error("Dashboard API request failed:", error.message);
 
     res.status(500).json({
       success: false,
       message: "Failed to load dashboard data",
+    });
+  } finally {
+    client?.release();
+  }
+});
+
+// Dashboard CSV Export endpoint
+app.get("/api/dashboard/export", async (req, res) => {
+  let client;
+
+  try {
+    client = await pool.connect();
+    const { dateRange } = req.query;
+
+    let dateFilterClause = "";
+    if (dateRange && dateRange !== "All time") {
+      if (dateRange === "Last 30 days") {
+        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident)";
+      } else if (dateRange === "Last 90 days") {
+        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '90 days' FROM public.accident)";
+      } else if (dateRange === "Last 12 months") {
+        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '12 months' FROM public.accident)";
+      } else if (dateRange === "Year to date") {
+        dateFilterClause = "DATE_TRUNC('year', date) = DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))";
+      }
+    }
+
+    const whereClause = dateFilterClause ? `WHERE ${dateFilterClause}` : "";
+
+    const rows = await client.query(`
+      SELECT
+        accident_id,
+        TO_CHAR(date, 'YYYY-MM-DD') AS date,
+        city,
+        state,
+        road_type,
+        accident_severity,
+        casualties,
+        cause,
+        weather,
+        visibility
+      FROM public.accident
+      ${whereClause}
+      ORDER BY date DESC NULLS LAST, accident_id DESC
+    `);
+
+    const csv = toCSV(rows.rows);
+    sendCSV(res, "roadwise-dashboard-export.csv", csv);
+  } catch (error) {
+    console.error("Dashboard export error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to export dashboard data",
     });
   } finally {
     client?.release();
@@ -241,7 +329,7 @@ async function handleTrends(req, res) {
     const dailyParams = [...filterParams];
     const dailyRes = await client.query(
       `
-      SELECT 
+      SELECT
         TO_CHAR(date, 'DD Mon') AS period,
         TO_CHAR(date, 'YYYY-MM-DD') AS date_key,
         COUNT(*)::int AS accidents,
@@ -261,7 +349,7 @@ async function handleTrends(req, res) {
     // Monthly
     const monthlyRes = await client.query(
       `
-      SELECT 
+      SELECT
         TO_CHAR(DATE_TRUNC('month', date), 'Mon YYYY') AS period,
         TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') AS month_key,
         COUNT(*)::int AS accidents,
@@ -279,7 +367,7 @@ async function handleTrends(req, res) {
     // Yearly
     const yearlyRes = await client.query(
       `
-      SELECT 
+      SELECT
         TO_CHAR(DATE_TRUNC('year', date), 'YYYY') AS period,
         COUNT(*)::int AS accidents,
         COALESCE(SUM(casualties), 0)::int AS injuries,
@@ -298,7 +386,7 @@ async function handleTrends(req, res) {
     const districtTotalIdx = districtParams.length; // $N for filteredTotal
     const districtRes = await client.query(
       `
-      SELECT 
+      SELECT
         city AS district,
         COUNT(*)::int AS accidents,
         CASE WHEN $${districtTotalIdx} > 0 THEN ROUND(COUNT(*) * 100.0 / $${districtTotalIdx}, 1)::float ELSE 0 END AS share,
@@ -329,7 +417,7 @@ async function handleTrends(req, res) {
     const severityTotalIdx = severityParams.length;
     const severityRes = await client.query(
       `
-      SELECT 
+      SELECT
         INITCAP(accident_severity) AS name,
         LOWER(accident_severity) AS raw_severity,
         COUNT(*)::int AS incidents,
@@ -358,7 +446,7 @@ async function handleTrends(req, res) {
     const hourlyTotalIdx = hourlyParams.length;
     const hourlyRes = await client.query(
       `
-      SELECT 
+      SELECT
         LPAD(hour::text, 2, '0') || ':00' AS hour,
         hour::int AS hour_num,
         COUNT(*)::int AS accidents,
@@ -377,7 +465,7 @@ async function handleTrends(req, res) {
     const weekdayTotalIdx = weekdayParams.length;
     const weekdayRes = await client.query(
       `
-      SELECT 
+      SELECT
         day_of_week AS day,
         SUBSTRING(day_of_week, 1, 3) AS short,
         COUNT(*)::int AS accidents,
@@ -405,7 +493,7 @@ async function handleTrends(req, res) {
     const weekendTotalIdx = weekendParams.length;
     const weekendRes = await client.query(
       `
-      SELECT 
+      SELECT
         is_weekend,
         CASE WHEN is_weekend = true THEN 'Weekend' ELSE 'Weekday' END AS category,
         COUNT(*)::int AS accidents,
@@ -436,7 +524,7 @@ async function handleTrends(req, res) {
     const causesTotalIdx = causesParams.length;
     const causesRes = await client.query(
       `
-      SELECT 
+      SELECT
         INITCAP(cause) AS type,
         COUNT(*)::int AS incidents,
         CASE WHEN $${causesTotalIdx} > 0 THEN ROUND(COUNT(*) * 100.0 / $${causesTotalIdx}, 1)::float ELSE 0 END AS share,
@@ -584,7 +672,7 @@ app.get("/api/hotspots", async (req, res) => {
 
     // Group by city and road_type to form geographical corridors/hotspots
     const clustersRes = await pool.query(`
-      SELECT 
+      SELECT
         city,
         state,
         road_type,
@@ -689,7 +777,7 @@ app.get("/api/causes", async (req, res) => {
 
     const causesRes = await client.query(
       `
-      SELECT 
+      SELECT
         INITCAP(cause) AS cause,
         COUNT(*)::int AS incidents,
         CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share,
@@ -718,7 +806,7 @@ app.get("/api/causes", async (req, res) => {
 
     // Traffic signal present share
     const signalRes = await client.query(`
-      SELECT 
+      SELECT
         ROUND(COUNT(CASE WHEN traffic_signal = true THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1)::float AS signal_share
       FROM public.accident
     `);
@@ -766,7 +854,7 @@ app.get("/api/conditions", async (req, res) => {
     // Weather impact
     const weatherRes = await client.query(
       `
-      SELECT 
+      SELECT
         INITCAP(weather) AS condition,
         COUNT(*)::int AS accidents,
         CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share,
@@ -783,7 +871,7 @@ app.get("/api/conditions", async (req, res) => {
     // Road type impact
     const roadRes = await client.query(
       `
-      SELECT 
+      SELECT
         INITCAP(road_type) AS surface,
         COUNT(*)::int AS accidents,
         CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share,
@@ -800,7 +888,7 @@ app.get("/api/conditions", async (req, res) => {
     // Visibility impact
     const visRes = await client.query(
       `
-      SELECT 
+      SELECT
         INITCAP(visibility) AS factor,
         COUNT(*)::int AS accidents,
         CASE WHEN $1 > 0 THEN ROUND(COUNT(*) * 100.0 / $1, 1)::float ELSE 0 END AS share,
@@ -809,7 +897,7 @@ app.get("/api/conditions", async (req, res) => {
       FROM public.accident
       WHERE visibility IS NOT NULL
       GROUP BY visibility
-      ORDER BY 
+      ORDER BY
         CASE LOWER(visibility)
           WHEN 'low' THEN 1
           WHEN 'medium' THEN 2
@@ -870,7 +958,7 @@ app.get("/api/vehicles", async (req, res) => {
 
     const vehRes = await client.query(
       `
-      SELECT 
+      SELECT
         vehicles_involved,
         vehicles_involved::text || ' Vehicle' || (CASE WHEN vehicles_involved > 1 THEN 's' ELSE '' END) AS type,
         COUNT(*)::int AS incidents,

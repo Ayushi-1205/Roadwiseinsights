@@ -1,13 +1,57 @@
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/+$/, "");
 
-export async function getDashboard() {
-  const response = await fetch(`${API_URL}/api/dashboard`);
+export async function getHealth(): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_URL}/api/health`);
+  if (!response.ok) {
+    throw new Error("Backend service unreachable");
+  }
+  return response.json();
+}
+
+export async function testDatabase(): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_URL}/api/test-db`);
+  if (!response.ok) {
+    throw new Error("Database connection test failed");
+  }
+  return response.json();
+}
+
+export async function getDashboard(dateRange?: string) {
+  const qs = new URLSearchParams();
+  if (dateRange && dateRange !== "All time") {
+    qs.set("dateRange", dateRange);
+  }
+  const url = `${API_URL}/api/dashboard${qs.toString() ? "?" + qs.toString() : ""}`;
+  const response = await fetch(url);
 
   if (!response.ok) {
     throw new Error("Failed to load dashboard data");
   }
 
   return response.json();
+}
+
+export async function exportDashboardCSV(dateRange?: string): Promise<number> {
+  const qs = new URLSearchParams();
+  if (dateRange && dateRange !== "All time") {
+    qs.set("dateRange", dateRange);
+  }
+  const url = `${API_URL}/api/dashboard/export${qs.toString() ? "?" + qs.toString() : ""}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    const json = await response.json().catch(() => ({}));
+    throw new Error((json as { message?: string }).message || "Dashboard export failed");
+  }
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = "roadwise-dashboard-export.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(blobUrl);
+  return blob.size;
 }
 
 export async function getAnalytics(params?: {

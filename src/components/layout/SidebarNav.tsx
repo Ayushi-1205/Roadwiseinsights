@@ -61,7 +61,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       <div className="m-3 rounded-xl border border-sidebar-border bg-sidebar-accent/40 p-4">
         <div className="flex items-center gap-2">
           <Radio className="h-4 w-4 text-success" strokeWidth={2} />
-          <p className="mono-label text-success">Live feed</p>
+          <p className="mono-label text-success">Database status</p>
         </div>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
           Connected to PostgreSQL database with 20,000 accident records across 8 major monitored

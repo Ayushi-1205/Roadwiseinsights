@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AlertTriangle, ArrowRight, Info, Siren } from "lucide-react";
+import { toast } from "sonner";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { KpiCard } from "@/components/ui-kit/KpiCard";
@@ -10,7 +11,7 @@ import { HourlyBars } from "@/components/charts/HourlyBars";
 import { SeverityDonut } from "@/components/charts/SeverityDonut";
 import { HotspotMap } from "@/components/HotspotMap";
 import { Button } from "@/components/ui/button";
-import { getDashboard } from "@/lib/api";
+import { getDashboard, exportDashboardCSV } from "@/lib/api";
 
 type DashboardResponse = {
   success: boolean;
@@ -18,7 +19,9 @@ type DashboardResponse = {
   summary: {
     total_accidents: number;
     total_casualties: number;
+    avg_casualties?: number;
     fatalities: number;
+    active_hotspots?: number;
     major_accidents: number;
     minor_accidents: number;
     records_without_date: number;
@@ -94,16 +97,22 @@ const severityColors: Record<string, string> = {
 
 function Index() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
+  const [dateRange, setDateRange] = useState("All time");
+  const [isExporting, setIsExporting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadDashboard() {
       try {
         setLoading(true);
         setError(null);
 
-        const data: DashboardResponse = await getDashboard();
+        const data: DashboardResponse = await getDashboard(dateRange);
+
+        if (cancelled) return;
 
         if (!data.success) {
           throw new Error("Dashboard API returned an error");
@@ -111,6 +120,7 @@ function Index() {
 
         setDashboard(data);
       } catch (err) {
+        if (cancelled) return;
         console.error("Dashboard loading error:", err);
 
         setError(
@@ -119,12 +129,35 @@ function Index() {
             : "Unable to load dashboard data",
         );
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     loadDashboard();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dateRange]);
+
+  const handleExport = async () => {
+    try {
+      setIsExporting(true);
+      const bytes = await exportDashboardCSV(dateRange);
+      toast.success(
+        `Dashboard export downloaded (${dateRange})`,
+      );
+    } catch (err) {
+      console.error("Export error:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to download dashboard CSV export",
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const totalAccidents = dashboard?.summary.total_accidents ?? 0;
   const trendData = (dashboard?.monthly_trend ?? []).slice(-12);
@@ -138,35 +171,53 @@ function Index() {
     color: severityColors[item.severity.toLowerCase()] ?? "var(--color-chart-2)",
   }));
 
+  const calculatedAvgCasualties = dashboard
+    ? dashboard.summary.avg_casualties != null
+      ? dashboard.summary.avg_casualties.toFixed(2)
+      : dashboard.summary.total_accidents > 0
+        ? (dashboard.summary.total_casualties / dashboard.summary.total_accidents).toFixed(2)
+        : "0.00"
+    : "—";
+
   const liveKpis = [
     {
       label: "Total Accidents",
       value: dashboard ? dashboard.summary.total_accidents.toLocaleString() : "—",
-      status: "No comparison",
-      hint: dashboard ? "Latest 12 months" : "Live data unavailable",
+      status: dateRange === "All time" ? "Full dataset" : dateRange,
+      hint: dashboard
+        ? `${dashboard.summary.total_casualties.toLocaleString()} total casualties`
+        : "Live data unavailable",
       series: dashboard ? trendData.map((item) => item.accidents) : undefined,
       tone: "primary" as const,
     },
     {
       label: "Fatalities",
       value: dashboard ? dashboard.summary.fatalities.toLocaleString() : "—",
-      status: "No comparison",
-      hint: dashboard ? "Latest 12 months" : "Live data unavailable",
+      status:
+        dashboard && dashboard.summary.total_accidents > 0
+          ? `${((dashboard.summary.fatalities / dashboard.summary.total_accidents) * 100).toFixed(1)}% fatal rate`
+          : "No comparison",
+      hint: dashboard
+        ? `${dashboard.summary.major_accidents.toLocaleString()} major, ${dashboard.summary.minor_accidents.toLocaleString()} minor`
+        : "Live data unavailable",
       series: dashboard ? trendData.map((item) => item.fatalities) : undefined,
       tone: "destructive" as const,
     },
     {
       label: "Active Hotspots",
-      value: "—",
-      status: "Unavailable",
-      hint: "Not provided by dashboard API",
+      value:
+        dashboard?.summary.active_hotspots != null
+          ? String(dashboard.summary.active_hotspots)
+          : "—",
+      status: "Monitored",
+      hint: "Live hotspot corridors",
       tone: "warning" as const,
     },
     {
-      label: "Avg. Response Time",
-      value: "—",
-      status: "Unavailable",
-      hint: "Not available in accident data",
+      label: "Avg. Casualties / Accident",
+      value: calculatedAvgCasualties,
+      status: "Calculated",
+      hint: "SUM(casualties) / total accidents",
       tone: "accent" as const,
     },
   ];
@@ -188,11 +239,18 @@ function Index() {
       });
 
   return (
-    <AppShell>
+    <AppShell
+      dateRange={dateRange}
+      onDateRangeChange={setDateRange}
+      onExport={handleExport}
+      isExporting={isExporting}
+      totalAccidents={dashboard?.summary.total_accidents}
+      activeHotspots={dashboard?.summary.active_hotspots}
+    >
       <PageHeader
         eyebrow="Command center · National network"
         title="Road safety intelligence overview"
-        description="Consolidated accident telemetry across the road safety database."
+        description="Consolidated accident intelligence across the PostgreSQL road safety database."
         action={
           <Button asChild>
             <Link to="/reports">
@@ -204,24 +262,42 @@ function Index() {
       />
 
       {/* DATABASE CONNECTION STATUS */}
-      <div className="mb-5 flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3">
-        <span
-          className={`h-2.5 w-2.5 rounded-full ${
-            loading
-              ? "bg-yellow-500"
-              : error
-                ? "bg-destructive"
-                : "bg-green-500"
-          }`}
-        />
+      <div className="mb-5 flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span
+            className={`h-2.5 w-2.5 rounded-full ${
+              loading
+                ? "bg-yellow-500 animate-pulse"
+                : error
+                  ? "bg-destructive"
+                  : "bg-green-500"
+            }`}
+          />
 
-        <span className="text-sm text-muted-foreground">
-          {loading
-            ? "Loading data from PostgreSQL..."
-            : error
-              ? `Database API error: ${error}`
-              : `Live PostgreSQL data · ${totalAccidents.toLocaleString()} accidents`}
-        </span>
+          <span className="text-sm text-muted-foreground">
+            {loading
+              ? `Querying PostgreSQL database (${dateRange})...`
+              : error
+                ? `Database API error: ${error}`
+                : `Live PostgreSQL data · ${totalAccidents.toLocaleString()} accidents ${dateRange !== "All time" ? `(${dateRange})` : ""}`}
+          </span>
+        </div>
+
+        {dateRange !== "All time" && (
+          <div className="flex items-center gap-3">
+            <span className="hidden lg:inline text-[11px] text-muted-foreground/80 italic">
+              Date ranges are relative to the latest accident record available in the database.
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setDateRange("All time")}
+              className="h-7 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Reset filter
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* KPI CARDS */}
@@ -239,7 +315,11 @@ function Index() {
       <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <Panel
           title="Accident & injury trend"
-          subtitle="Rolling 12 months · monthly aggregation"
+          subtitle={
+            dateRange === "All time"
+              ? "Rolling 12 months · monthly aggregation"
+              : `Monthly aggregation · ${dateRange}`
+          }
           action={
             <div className="flex items-center gap-3">
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -330,7 +410,7 @@ function Index() {
               : "Primary contributing factors"
           }
         >
-          {liveCauses ? (
+          {liveCauses && liveCauses.length > 0 ? (
             <div>
               {liveCauses.map((c) => (
                 <StatRow key={c.cause} label={c.cause} value={`${c.share}%`} />
@@ -372,9 +452,7 @@ function Index() {
           </p>
 
           <p className="mt-1 text-xs text-muted-foreground">
-            Make sure the backend is running on
-            {" "}
-            http://localhost:5000
+            Make sure the backend API service is running and accessible.
           </p>
         </div>
       )}
