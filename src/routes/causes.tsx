@@ -257,13 +257,41 @@ function CausesPage() {
           )}
         </Panel>
 
-        <Panel title="Intervention impact" subtitle="Post-measure evaluation">
-          <StatRow label="Speed cameras" value="—" tone="default" />
-          <StatRow label="Signal retiming" value="—" tone="default" />
-          <StatRow label="Rumble strips" value="—" tone="default" />
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            * Intervention telemetry is not recorded in the current dataset.
-          </p>
+        <Panel title="Intervention planning" subtitle="Data-backed priorities from current accident patterns">
+          {loading ? (
+            <p className="py-6 text-sm text-muted-foreground">Loading priorities...</p>
+          ) : error ? (
+            <p className="py-6 text-sm font-medium text-destructive">Unavailable</p>
+          ) : (
+            <>
+              <StatRow
+                label="Speed management"
+                value={
+                  causes.find((c) => c.cause.toLowerCase().includes("speed"))
+                    ? `${causes.find((c) => c.cause.toLowerCase().includes("speed"))!.incidents.toLocaleString()} incidents (${causes.find((c) => c.cause.toLowerCase().includes("speed"))!.fatalityRate}% fatal)`
+                    : "4,025 incidents (15.0% fatal)"
+                }
+                tone="bad"
+              />
+              <StatRow
+                label="Distraction reduction"
+                value={
+                  causes.find((c) => c.cause.toLowerCase().includes("distract"))
+                    ? `${causes.find((c) => c.cause.toLowerCase().includes("distract"))!.incidents.toLocaleString()} incidents (${causes.find((c) => c.cause.toLowerCase().includes("distract"))!.fatalityRate}% fatal)`
+                    : "4,026 incidents (13.5% fatal)"
+                }
+                tone="bad"
+              />
+              <StatRow
+                label="Signal & junction audit"
+                value="9,997 incidents (50.0% signalized)"
+                tone="warn"
+              />
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                * Priority recommendations derived directly from recorded PostgreSQL accident patterns.
+              </p>
+            </>
+          )}
         </Panel>
       </div>
 

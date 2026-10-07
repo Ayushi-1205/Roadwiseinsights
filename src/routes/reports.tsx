@@ -136,26 +136,81 @@ const EXPORTS: ExportSpec[] = [
   },
 ];
 
-// ─── Quick-template items (display only — no false promises) ──────────────────
+import { toast } from "sonner";
 
-const templates = [
+// ─── Quick-template items (functional CSV downloads) ─────────────────────────
+
+type QuickTemplateSpec = {
+  title: string;
+  endpoint: "severity-summary" | "hotspot-corridors" | "monthly-trend" | "cause-breakdown";
+  filename: string;
+  detail: string;
+};
+
+const TEMPLATES: QuickTemplateSpec[] = [
   {
     title: "Corridor safety audit",
-    detail: "Download hotspot corridors CSV → filter by fatality_rate_pct",
+    endpoint: "hotspot-corridors",
+    filename: "roadwise-hotspot-corridors.csv",
+    detail: "Download hotspot corridor CSV · City × Road type breakdown",
   },
   {
     title: "Severity review",
-    detail: "Download severity summary CSV → all severity classes",
+    endpoint: "severity-summary",
+    filename: "roadwise-severity-summary.csv",
+    detail: "Download severity summary CSV · Fatalities & casualty rates",
   },
   {
     title: "Cause impact study",
-    detail: "Download cause breakdown CSV → distraction, overspeeding, weather",
+    endpoint: "cause-breakdown",
+    filename: "roadwise-cause-breakdown.csv",
+    detail: "Download cause breakdown CSV · Primary contributing factors",
   },
   {
     title: "Monthly trend digest",
-    detail: "Download monthly trend CSV → Jan 2022 to Apr 2025",
+    endpoint: "monthly-trend",
+    filename: "roadwise-monthly-trend.csv",
+    detail: "Download monthly trend CSV · 40-month longitudinal dataset",
   },
 ];
+
+function QuickTemplateItem({ t }: { t: QuickTemplateSpec }) {
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleDownload() {
+    try {
+      setDownloading(true);
+      await downloadCSVReport(t.endpoint, t.filename);
+      toast.success(`Downloaded ${t.filename}`);
+    } catch (err) {
+      console.error("Template download error:", err);
+      toast.error(err instanceof Error ? err.message : `Failed to download ${t.filename}`);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleDownload}
+      disabled={downloading}
+      className="w-full text-left rounded-xl border border-border bg-elevated/50 p-4 transition-colors hover:bg-accent/40 focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-70"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-foreground">{t.title}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t.detail}</p>
+        </div>
+        {downloading ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+        ) : (
+          <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
+      </div>
+    </button>
+  );
+}
 
 // ─── DownloadButton ───────────────────────────────────────────────────────────
 
@@ -408,37 +463,48 @@ function ReportsPage() {
             ) : null}
           </Panel>
 
-          {/* ── Quick templates (informational) ── */}
-          <Panel title="Quick templates" subtitle="Suggested workflows using CSV exports">
-            <ul className="space-y-2">
-              {templates.map((t) => (
-                <li key={t.title}>
-                  <div className="rounded-xl border border-border bg-elevated/50 p-4">
-                    <p className="text-sm font-medium text-foreground">{t.title}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{t.detail}</p>
-                  </div>
-                </li>
+          {/* ── Quick templates ── */}
+          <Panel title="Quick templates" subtitle="Trigger instant CSV exports for targeted audits">
+            <div className="space-y-2">
+              {TEMPLATES.map((t) => (
+                <QuickTemplateItem key={t.title} t={t} />
               ))}
-            </ul>
+            </div>
           </Panel>
 
-          {/* ── Distribution (placeholder — clearly labelled) ── */}
-          <Panel title="Distribution" subtitle="Scheduled delivery — not yet implemented">
-            <StatRow label="Weekly digest" value="—" tone="default" />
-            <StatRow label="Monthly review" value="—" tone="default" />
-            <StatRow label="Recipients" value="—" tone="default" />
+          {/* ── Report delivery status ── */}
+          <Panel
+            title="Report delivery status"
+            subtitle="Manual export availability & scheduled delivery configuration"
+          >
+            <StatRow label="Manual exports" value="Available" tone="good" />
+            <StatRow label="Scheduled weekly digest" value="Not configured" tone="default" />
+            <StatRow label="Scheduled monthly review" value="Not configured" tone="default" />
+            <StatRow label="Email recipients" value="Not configured" tone="default" />
             <div className="mt-4 flex gap-2">
-              <Button variant="outline" size="sm" className="flex-1" disabled>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                disabled
+                title="Automated scheduling is not configured."
+              >
                 <Clock className="mr-2 h-4 w-4" />
                 Schedule
               </Button>
-              <Button variant="outline" size="sm" className="flex-1" disabled>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                disabled
+                title="Automated scheduling is not configured."
+              >
                 <Share2 className="mr-2 h-4 w-4" />
                 Share
               </Button>
             </div>
             <p className="mt-3 text-[11px] text-muted-foreground">
-              Scheduled delivery and automated email distribution are currently unavailable.
+              Direct CSV file downloads are active. Automated email digests and scheduled distribution channels are not configured.
             </p>
           </Panel>
         </div>

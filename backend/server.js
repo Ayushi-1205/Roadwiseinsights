@@ -706,6 +706,8 @@ app.get("/api/hotspots", async (req, res) => {
         state,
         road_type,
         COUNT(*)::int AS incidents,
+        COUNT(CASE WHEN date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident) THEN 1 END)::int AS recent_30d,
+        COUNT(CASE WHEN date >= (SELECT MAX(date) - INTERVAL '60 days' FROM public.accident) AND date < (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident) THEN 1 END)::int AS previous_30d,
         ROUND(AVG(latitude::numeric), 6)::float AS latitude,
         ROUND(AVG(longitude::numeric), 6)::float AS longitude,
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatal_count,
@@ -747,6 +749,16 @@ app.get("/api/hotspots", async (req, res) => {
       const fatalScore = Math.min((c.fatal_rate / 25) * 50, 50);
       const risk = Math.min(Math.round(volumeScore + fatalScore), 99);
 
+      // 30-day percentage change calculation
+      let delta30d = "—";
+      if (c.previous_30d > 0) {
+        const pct = ((c.recent_30d - c.previous_30d) * 100.0) / c.previous_30d;
+        const rounded = Math.round(pct * 10) / 10;
+        delta30d = (rounded > 0 ? "+" : "") + rounded.toFixed(1) + "%";
+      } else if (c.recent_30d > 0) {
+        delta30d = "New";
+      }
+
       // SVG map coordinates projection (latitude inverted for y-axis)
       const x = lonSpan === 0 || !Number.isFinite(lonSpan) ? 50 : Math.round(15 + ((c.longitude - minLon) / lonSpan) * 70);
       const y = latSpan === 0 || !Number.isFinite(latSpan) ? 50 : Math.round(15 + ((maxLat - c.latitude) / latSpan) * 70);
@@ -763,7 +775,8 @@ app.get("/api/hotspots", async (req, res) => {
         longitude: c.longitude,
         risk,
         incidents: c.incidents,
-        fatalCount: c.fatal_count
+        fatalCount: c.fatal_count,
+        delta30d,
       };
     });
 
@@ -776,7 +789,8 @@ app.get("/api/hotspots", async (req, res) => {
         corridor: `${h.city} (${h.kind})`,
         risk: h.risk,
         incidents: h.incidents,
-        status
+        status,
+        delta30d: h.delta30d,
       };
     });
 

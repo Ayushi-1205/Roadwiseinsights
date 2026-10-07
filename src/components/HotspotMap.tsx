@@ -16,6 +16,7 @@ export type HotspotItem = {
   state?: string;
   latitude?: number;
   longitude?: number;
+  delta30d?: string;
 };
 
 function riskColor(risk: number) {

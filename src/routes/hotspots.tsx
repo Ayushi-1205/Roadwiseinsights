@@ -33,6 +33,7 @@ type CorridorRiskItem = {
   risk: number;
   incidents: number;
   status: string;
+  delta30d?: string;
 };
 
 const statusTone: Record<string, string> = {
@@ -191,8 +192,14 @@ function HotspotsPage() {
                       <td className="numeric px-3 py-3 text-right font-semibold text-foreground">
                         {c.risk}
                       </td>
-                      <td className="numeric px-3 py-3 text-right font-semibold text-muted-foreground">
-                        —
+                      <td className={`numeric px-3 py-3 text-right font-semibold ${
+                        c.delta30d?.startsWith("+")
+                          ? "text-destructive"
+                          : c.delta30d?.startsWith("-")
+                            ? "text-green-500"
+                            : "text-muted-foreground"
+                      }`}>
+                        {c.delta30d ?? "—"}
                       </td>
                       <td className="px-5 py-3 text-right">
                         <span
