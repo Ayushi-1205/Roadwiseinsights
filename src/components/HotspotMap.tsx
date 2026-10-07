@@ -33,11 +33,15 @@ export function HotspotMap({
   hotspotsData,
   loading: loadingProp,
   error: errorProp,
+  city,
+  dateRange,
 }: {
   className?: string;
   hotspotsData?: HotspotItem[];
   loading?: boolean;
   error?: string | null;
+  city?: string;
+  dateRange?: string;
 }) {
   const isControlled = hotspotsData !== undefined || loadingProp !== undefined || errorProp != null;
   const [fetched, setFetched] = useState<HotspotItem[]>([]);
@@ -54,7 +58,7 @@ export function HotspotMap({
     setFetchLoading(true);
     setFetchError(null);
 
-    getHotspots()
+    getHotspots({ city, dateRange })
       .then((res) => {
         if (cancelled) return;
         if (res && res.success && Array.isArray(res.hotspots)) {
@@ -77,7 +81,7 @@ export function HotspotMap({
     return () => {
       cancelled = true;
     };
-  }, [isControlled]);
+  }, [isControlled, city, dateRange]);
 
   const data = useMemo(
     () => (isControlled ? (hotspotsData ?? []) : fetched),

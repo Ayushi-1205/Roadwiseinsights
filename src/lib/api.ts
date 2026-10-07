@@ -16,10 +16,16 @@ export async function testDatabase(): Promise<{ success: boolean; message: strin
   return response.json();
 }
 
-export async function getDashboard(dateRange?: string) {
+export async function getDashboard(params?: { dateRange?: string; city?: string } | string) {
   const qs = new URLSearchParams();
+  const dateRange = typeof params === "string" ? params : params?.dateRange;
+  const city = typeof params === "object" ? params?.city : undefined;
+
   if (dateRange && dateRange !== "All time") {
     qs.set("dateRange", dateRange);
+  }
+  if (city && city.trim() !== "" && city !== "All districts") {
+    qs.set("city", city.trim());
   }
   const url = `${API_URL}/api/dashboard${qs.toString() ? "?" + qs.toString() : ""}`;
   const response = await fetch(url);
@@ -31,10 +37,16 @@ export async function getDashboard(dateRange?: string) {
   return response.json();
 }
 
-export async function exportDashboardCSV(dateRange?: string): Promise<number> {
+export async function exportDashboardCSV(params?: { dateRange?: string; city?: string } | string): Promise<number> {
   const qs = new URLSearchParams();
+  const dateRange = typeof params === "string" ? params : params?.dateRange;
+  const city = typeof params === "object" ? params?.city : undefined;
+
   if (dateRange && dateRange !== "All time") {
     qs.set("dateRange", dateRange);
+  }
+  if (city && city.trim() !== "" && city !== "All districts") {
+    qs.set("city", city.trim());
   }
   const url = `${API_URL}/api/dashboard/export${qs.toString() ? "?" + qs.toString() : ""}`;
   const response = await fetch(url);
@@ -46,7 +58,10 @@ export async function exportDashboardCSV(dateRange?: string): Promise<number> {
   const blobUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = blobUrl;
-  a.download = "roadwise-dashboard-export.csv";
+  const filename = city && city !== "All districts"
+    ? `roadwise-dashboard-${city.toLowerCase().replace(/\s+/g, "-")}-export.csv`
+    : "roadwise-dashboard-export.csv";
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -82,8 +97,16 @@ export async function getTrends() {
   return response.json();
 }
 
-export async function getHotspots() {
-  const response = await fetch(`${API_URL}/api/hotspots`);
+export async function getHotspots(params?: { dateRange?: string; city?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.dateRange && params.dateRange !== "All time") {
+    qs.set("dateRange", params.dateRange);
+  }
+  if (params?.city && params.city.trim() !== "" && params.city !== "All districts") {
+    qs.set("city", params.city.trim());
+  }
+  const url = `${API_URL}/api/hotspots${qs.toString() ? "?" + qs.toString() : ""}`;
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Failed to load hotspots data");
   }

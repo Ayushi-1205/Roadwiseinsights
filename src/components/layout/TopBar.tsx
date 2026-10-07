@@ -14,7 +14,7 @@ import {
   X,
   AlertCircle,
 } from "lucide-react";
-import { useNavigate, Link } from "@tanstack/react-router";
+import { useNavigate, Link, useLocation } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -37,6 +37,9 @@ export interface TopBarProps {
   isExporting?: boolean;
   totalAccidents?: number;
   activeHotspots?: number;
+  selectedCity?: string;
+  onCitySelect?: (city: string) => void;
+  onClearCity?: () => void;
 }
 
 const DATE_OPTIONS = [
@@ -54,6 +57,7 @@ interface SearchItem {
   description: string;
   route: string;
   keywords: string;
+  city?: string;
 }
 
 // Static application routes / workspaces (these correspond to genuine app routes)
@@ -123,12 +127,17 @@ export function TopBar({
   isExporting = false,
   totalAccidents: propTotalAccidents,
   activeHotspots: propActiveHotspots,
+  selectedCity = "",
+  onCitySelect,
+  onClearCity,
 }: TopBarProps) {
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDashboard = location.pathname === "/" || Boolean(onCitySelect);
 
   // Dynamic system status state (loaded from live APIs)
   const [backendHealth, setBackendHealth] = useState<"checking" | "online" | "offline">("checking");
@@ -188,6 +197,7 @@ export function TopBar({
           description: state ? `${state} district · Real PostgreSQL data` : "Monitored district",
           route: "/analytics",
           keywords: `${city} ${state} district urban city analytics`.toLowerCase(),
+          city,
         }));
 
         // Derive corridors dynamically from backend
@@ -198,6 +208,7 @@ export function TopBar({
           description: `${h.city || ""} · ${h.kind || "Corridor"} · Risk score ${h.risk}`,
           route: "/hotspots",
           keywords: `${h.name} ${h.city || ""} ${h.state || ""} ${h.kind || ""} corridor hotspot`.toLowerCase(),
+          city: h.city,
         }));
 
         setDynamicSearchItems([...districtItems, ...corridorItems]);
@@ -261,6 +272,33 @@ export function TopBar({
   const handleSelectSearchItem = (item: SearchItem) => {
     setSearchQuery("");
     setIsSearchFocused(false);
+
+    if (isDashboard || onCitySelect) {
+      if (item.category === "Districts") {
+        onCitySelect?.(item.title);
+        return;
+      }
+      if (item.category === "Corridors") {
+        const cityCandidate = item.city || item.title.split(" - ")[0].trim();
+        if (cityCandidate) {
+          onCitySelect?.(cityCandidate);
+          return;
+        }
+      }
+      if (item.category === "Workspaces") {
+        navigate({ to: item.route as "/" });
+        return;
+      }
+      if (item.city && onCitySelect) {
+        onCitySelect(item.city);
+        return;
+      }
+      if (item.title && onCitySelect) {
+        onCitySelect(item.title);
+        return;
+      }
+    }
+
     navigate({ to: item.route as "/" });
   };
 
@@ -290,15 +328,15 @@ export function TopBar({
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl">
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 lg:px-8">
-        <div className="flex min-w-0 items-center gap-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:gap-3 px-3 py-2.5 sm:px-4 sm:py-3 lg:px-8">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           {/* Mobile navigation sheet */}
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="lg:hidden"
+                className="lg:hidden shrink-0"
                 aria-label="Open navigation"
               >
                 <Menu className="h-5 w-5" />
@@ -311,9 +349,9 @@ export function TopBar({
           </Sheet>
 
           {/* Interactive Search Bar */}
-          <div ref={searchContainerRef} className="relative hidden min-w-0 flex-1 md:block md:max-w-md">
+          <div ref={searchContainerRef} className="relative min-w-0 flex-1 max-w-[170px] xs:max-w-[210px] sm:max-w-xs md:max-w-md">
             <div className="relative flex items-center">
-              <Search className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-2.5 sm:left-3 h-3.5 w-3.5 sm:h-4 sm:w-4 text-muted-foreground" />
               <input
                 type="search"
                 value={searchQuery}
@@ -325,27 +363,47 @@ export function TopBar({
                 onKeyDown={(e) => {
                   if (e.key === "Escape") {
                     setIsSearchFocused(false);
-                  } else if (e.key === "Enter" && searchResults.length > 0) {
-                    handleSelectSearchItem(searchResults[0]);
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (isDashboard || onCitySelect) {
+                      if (searchResults.length > 0) {
+                        handleSelectSearchItem(searchResults[0]);
+                        return;
+                      }
+                      const trimmed = searchQuery.trim();
+                      if (trimmed && onCitySelect) {
+                        const matchedItem = dynamicSearchItems.find(
+                          (it) => it.title.toLowerCase() === trimmed.toLowerCase() ||
+                                  (it.city && it.city.toLowerCase() === trimmed.toLowerCase())
+                        );
+                        const targetCity = matchedItem ? (matchedItem.city || matchedItem.title) : trimmed;
+                        onCitySelect(targetCity);
+                        setSearchQuery("");
+                        setIsSearchFocused(false);
+                        return;
+                      }
+                    } else if (searchResults.length > 0) {
+                      handleSelectSearchItem(searchResults[0]);
+                    }
                   }
                 }}
-                placeholder="Search corridors, districts, reports…"
-                className="h-10 w-full rounded-lg border border-input bg-card/60 pl-9 pr-8 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-ring/40"
+                placeholder={selectedCity ? `District: ${selectedCity}` : "Search corridors, districts, reports…"}
+                className="h-9 sm:h-10 w-full rounded-lg border border-input bg-card/60 pl-8 sm:pl-9 pr-7 sm:pr-8 text-xs sm:text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-ring/40"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-2.5 text-muted-foreground hover:text-foreground"
+                  className="absolute right-2 sm:right-2.5 text-muted-foreground hover:text-foreground"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                 </button>
               )}
             </div>
 
             {/* Search Results Dropdown */}
             {isSearchFocused && searchQuery.trim() && (
-              <div className="absolute left-0 right-0 top-12 z-50 rounded-xl border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md">
+              <div className="absolute left-0 right-0 top-11 sm:top-12 z-50 rounded-xl border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md">
                 <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Found {searchResults.length} matching result{searchResults.length === 1 ? "" : "s"}
                 </div>
@@ -385,17 +443,35 @@ export function TopBar({
             )}
           </div>
 
-          {/* Date Filter Dropdown with Relational Clarification */}
+          {/* Active City Filter Badge in TopBar (when filtered) */}
+          {selectedCity && (
+            <div className="hidden md:flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary shrink-0">
+              <MapPin className="h-3.5 w-3.5 shrink-0" />
+              <span className="max-w-[100px] truncate">{selectedCity}</span>
+              {onClearCity && (
+                <button
+                  type="button"
+                  onClick={onClearCity}
+                  className="rounded p-0.5 hover:bg-primary/20 text-primary/80 hover:text-primary transition-colors"
+                  title="Clear district filter"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Responsive Date Filter Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 title="Date ranges are relative to the latest accident record available in the database."
-                className="hidden items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-left transition-colors hover:bg-card/90 xl:flex"
+                className="flex items-center gap-1.5 sm:gap-2 rounded-lg border border-border bg-card/60 px-2 sm:px-3 py-1.5 sm:py-2 text-left transition-colors hover:bg-card/90 shrink-0"
               >
-                <CalendarRange className="h-4 w-4 text-primary" />
-                <span className="text-xs font-medium text-foreground">{dateRange}</span>
-                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                <CalendarRange className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary shrink-0" />
+                <span className="text-xs font-medium text-foreground whitespace-nowrap">{dateRange}</span>
+                <ChevronDown className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-muted-foreground shrink-0" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-56">

@@ -11,6 +11,9 @@ export interface AppShellProps {
   isExporting?: boolean;
   totalAccidents?: number;
   activeHotspots?: number;
+  selectedCity?: string;
+  onCitySelect?: (city: string) => void;
+  onClearCity?: () => void;
 }
 
 export function AppShell({
@@ -21,6 +24,9 @@ export function AppShell({
   isExporting,
   totalAccidents,
   activeHotspots,
+  selectedCity,
+  onCitySelect,
+  onClearCity,
 }: AppShellProps) {
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[272px_minmax(0,1fr)]">
@@ -35,6 +41,9 @@ export function AppShell({
           isExporting={isExporting}
           totalAccidents={totalAccidents}
           activeHotspots={activeHotspots}
+          selectedCity={selectedCity}
+          onCitySelect={onCitySelect}
+          onClearCity={onClearCity}
         />
         <main className="min-w-0 flex-1 px-4 pb-16 pt-6 lg:px-8">{children}</main>
       </div>

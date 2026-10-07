@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AlertTriangle, ArrowRight, Info, Siren } from "lucide-react";
+import { AlertTriangle, ArrowRight, Info, MapPin, Siren, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/layout/AppShell";
@@ -98,6 +98,7 @@ const severityColors: Record<string, string> = {
 function Index() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [dateRange, setDateRange] = useState("All time");
+  const [selectedCity, setSelectedCity] = useState("");
   const [isExporting, setIsExporting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +111,10 @@ function Index() {
         setLoading(true);
         setError(null);
 
-        const data: DashboardResponse = await getDashboard(dateRange);
+        const data: DashboardResponse = await getDashboard({
+          dateRange,
+          city: selectedCity,
+        });
 
         if (cancelled) return;
 
@@ -140,14 +144,17 @@ function Index() {
     return () => {
       cancelled = true;
     };
-  }, [dateRange]);
+  }, [dateRange, selectedCity]);
 
   const handleExport = async () => {
     try {
       setIsExporting(true);
-      const bytes = await exportDashboardCSV(dateRange);
+      const bytes = await exportDashboardCSV({
+        dateRange,
+        city: selectedCity,
+      });
       toast.success(
-        `Dashboard export downloaded (${dateRange})`,
+        `Dashboard export downloaded (${selectedCity ? selectedCity + " · " : ""}${dateRange})`,
       );
     } catch (err) {
       console.error("Export error:", err);
@@ -183,7 +190,11 @@ function Index() {
     {
       label: "Total Accidents",
       value: dashboard ? dashboard.summary.total_accidents.toLocaleString() : "—",
-      status: dateRange === "All time" ? "Full dataset" : dateRange,
+      status: selectedCity
+        ? `${selectedCity} · ${dateRange}`
+        : dateRange === "All time"
+          ? "Full dataset"
+          : dateRange,
       hint: dashboard
         ? `${dashboard.summary.total_casualties.toLocaleString()} total casualties`
         : "Live data unavailable",
@@ -210,7 +221,7 @@ function Index() {
           ? String(dashboard.summary.active_hotspots)
           : "—",
       status: "Monitored",
-      hint: "Live hotspot corridors",
+      hint: selectedCity ? `${selectedCity} risk corridors` : "Live hotspot corridors",
       tone: "warning" as const,
     },
     {
@@ -246,11 +257,18 @@ function Index() {
       isExporting={isExporting}
       totalAccidents={dashboard?.summary.total_accidents}
       activeHotspots={dashboard?.summary.active_hotspots}
+      selectedCity={selectedCity}
+      onCitySelect={(city) => setSelectedCity(city)}
+      onClearCity={() => setSelectedCity("")}
     >
       <PageHeader
-        eyebrow="Command center · National network"
-        title="Road safety intelligence overview"
-        description="Consolidated accident intelligence across the PostgreSQL road safety database."
+        eyebrow={selectedCity ? `Command center · ${selectedCity} district` : "Command center · National network"}
+        title={selectedCity ? `${selectedCity} road safety intelligence` : "Road safety intelligence overview"}
+        description={
+          selectedCity
+            ? `Consolidated accident intelligence for ${selectedCity} across the PostgreSQL database.`
+            : "Consolidated accident intelligence across the PostgreSQL road safety database."
+        }
         action={
           <Button asChild>
             <Link to="/reports">
@@ -261,9 +279,9 @@ function Index() {
         }
       />
 
-      {/* DATABASE CONNECTION STATUS */}
-      <div className="mb-5 flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-3">
-        <div className="flex items-center gap-2">
+      {/* DATABASE CONNECTION STATUS & ACTIVE FILTERS */}
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
           <span
             className={`h-2.5 w-2.5 rounded-full ${
               loading
@@ -276,14 +294,31 @@ function Index() {
 
           <span className="text-sm text-muted-foreground">
             {loading
-              ? `Querying PostgreSQL database (${dateRange})...`
+              ? `Querying PostgreSQL database (${selectedCity ? selectedCity + " · " : ""}${dateRange})...`
               : error
                 ? `Database API error: ${error}`
-                : `Live PostgreSQL data · ${totalAccidents.toLocaleString()} accidents ${dateRange !== "All time" ? `(${dateRange})` : ""}`}
+                : `Live PostgreSQL data · ${totalAccidents.toLocaleString()} accidents ${
+                    selectedCity ? `in ${selectedCity}` : ""
+                  } ${dateRange !== "All time" ? `(${dateRange})` : ""}`}
           </span>
+
+          {selectedCity && (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-xs font-medium text-primary">
+              <MapPin className="h-3 w-3" />
+              <span>District: {selectedCity}</span>
+              <button
+                type="button"
+                onClick={() => setSelectedCity("")}
+                className="ml-1 rounded p-0.5 text-primary/70 hover:text-primary hover:bg-primary/20 transition-colors"
+                title="Clear district filter"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
         </div>
 
-        {dateRange !== "All time" && (
+        {(dateRange !== "All time" || Boolean(selectedCity)) && (
           <div className="flex items-center gap-3">
             <span className="hidden lg:inline text-[11px] text-muted-foreground/80 italic">
               Date ranges are relative to the latest accident record available in the database.
@@ -291,10 +326,13 @@ function Index() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setDateRange("All time")}
+              onClick={() => {
+                setSelectedCity("");
+                setDateRange("All time");
+              }}
               className="h-7 text-xs text-muted-foreground hover:text-foreground"
             >
-              Reset filter
+              Reset all filters
             </Button>
           </div>
         )}
@@ -427,8 +465,12 @@ function Index() {
       {/* HOTSPOT MAP */}
       <Panel
         className="mt-5"
-        title="Accident hotspot map"
-        subtitle="Top risk corridors · click a marker for detail"
+        title={selectedCity ? `${selectedCity} accident hotspot map` : "Accident hotspot map"}
+        subtitle={
+          selectedCity
+            ? `Monitored risk corridors in ${selectedCity} · click a marker for detail`
+            : "Top risk corridors · click a marker for detail"
+        }
         action={
           <Button
             variant="outline"
@@ -441,7 +483,7 @@ function Index() {
           </Button>
         }
       >
-        <HotspotMap />
+        <HotspotMap city={selectedCity} dateRange={dateRange} />
       </Panel>
 
       {/* ERROR MESSAGE */}

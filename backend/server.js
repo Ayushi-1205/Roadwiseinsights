@@ -59,32 +59,36 @@ const PORT = process.env.PORT || 5000;
 
 
 // Dashboard data
-// Supports query param: dateRange ('All time', 'Last 30 days', 'Last 90 days', 'Last 12 months', 'Year to date')
+// Supports query params: dateRange ('All time', 'Last 30 days', 'Last 90 days', 'Last 12 months', 'Year to date'), city
 app.get("/api/dashboard", async (req, res) => {
-  let client;
-
   try {
-    client = await pool.connect();
-    const { dateRange } = req.query;
+    const { dateRange, city } = req.query;
 
-    let dateFilterClause = "";
+    const conditions = [];
+    const params = [];
+
+    if (city && city.trim() !== "") {
+      params.push(city.trim());
+      conditions.push(`city ILIKE $${params.length}`);
+    }
+
     if (dateRange && dateRange !== "All time") {
       if (dateRange === "Last 30 days") {
-        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident)";
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident)");
       } else if (dateRange === "Last 90 days") {
-        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '90 days' FROM public.accident)";
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '90 days' FROM public.accident)");
       } else if (dateRange === "Last 12 months") {
-        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '12 months' FROM public.accident)";
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '12 months' FROM public.accident)");
       } else if (dateRange === "Year to date") {
-        dateFilterClause = "DATE_TRUNC('year', date) = DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))";
+        conditions.push("DATE_TRUNC('year', date) = DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))");
       }
     }
 
-    const whereClause = dateFilterClause ? `WHERE ${dateFilterClause}` : "";
-    const andClause = dateFilterClause ? `AND ${dateFilterClause}` : "";
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const andClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "";
 
     const [summaryResult, severityResult, causeResult, hourlyResult, trendResult] = await Promise.all([
-      client.query(`
+      pool.query(`
         SELECT
           COUNT(*)::int AS total_accidents,
           COALESCE(SUM(casualties), 0)::int AS total_casualties,
@@ -105,8 +109,8 @@ app.get("/api/dashboard", async (req, res) => {
           ) AS active_hotspots
         FROM public.accident
         ${whereClause}
-      `),
-      client.query(`
+      `, params),
+      pool.query(`
         SELECT
           COALESCE(NULLIF(TRIM(accident_severity), ''), 'unknown') AS severity,
           COUNT(*)::int AS count
@@ -114,8 +118,8 @@ app.get("/api/dashboard", async (req, res) => {
         ${whereClause}
         GROUP BY 1
         ORDER BY count DESC, severity
-      `),
-      client.query(`
+      `, params),
+      pool.query(`
         SELECT
           COALESCE(NULLIF(TRIM(cause), ''), 'unknown') AS cause,
           COUNT(*)::int AS count
@@ -123,16 +127,16 @@ app.get("/api/dashboard", async (req, res) => {
         ${whereClause}
         GROUP BY 1
         ORDER BY count DESC, cause
-      `),
-      client.query(`
+      `, params),
+      pool.query(`
         SELECT hour, COUNT(*)::int AS count
         FROM public.accident
         WHERE hour IS NOT NULL
         ${andClause}
         GROUP BY hour
         ORDER BY hour
-      `),
-      client.query(`
+      `, params),
+      pool.query(`
         SELECT
           TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') AS month,
           COUNT(*)::int AS accidents,
@@ -143,7 +147,7 @@ app.get("/api/dashboard", async (req, res) => {
         ${andClause}
         GROUP BY DATE_TRUNC('month', date)
         ORDER BY DATE_TRUNC('month', date)
-      `),
+      `, params),
     ]);
 
     const summary = summaryResult.rows[0];
@@ -187,35 +191,37 @@ app.get("/api/dashboard", async (req, res) => {
       success: false,
       message: "Failed to load dashboard data",
     });
-  } finally {
-    client?.release();
   }
 });
 
 // Dashboard CSV Export endpoint
 app.get("/api/dashboard/export", async (req, res) => {
-  let client;
-
   try {
-    client = await pool.connect();
-    const { dateRange } = req.query;
+    const { dateRange, city } = req.query;
 
-    let dateFilterClause = "";
+    const conditions = [];
+    const params = [];
+
+    if (city && city.trim() !== "") {
+      params.push(city.trim());
+      conditions.push(`city ILIKE $${params.length}`);
+    }
+
     if (dateRange && dateRange !== "All time") {
       if (dateRange === "Last 30 days") {
-        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident)";
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident)");
       } else if (dateRange === "Last 90 days") {
-        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '90 days' FROM public.accident)";
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '90 days' FROM public.accident)");
       } else if (dateRange === "Last 12 months") {
-        dateFilterClause = "date >= (SELECT MAX(date) - INTERVAL '12 months' FROM public.accident)";
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '12 months' FROM public.accident)");
       } else if (dateRange === "Year to date") {
-        dateFilterClause = "DATE_TRUNC('year', date) = DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))";
+        conditions.push("DATE_TRUNC('year', date) = DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))");
       }
     }
 
-    const whereClause = dateFilterClause ? `WHERE ${dateFilterClause}` : "";
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const rows = await client.query(`
+    const rows = await pool.query(`
       SELECT
         accident_id,
         TO_CHAR(date, 'YYYY-MM-DD') AS date,
@@ -230,7 +236,7 @@ app.get("/api/dashboard/export", async (req, res) => {
       FROM public.accident
       ${whereClause}
       ORDER BY date DESC NULLS LAST, accident_id DESC
-    `);
+    `, params);
 
     const csv = toCSV(rows.rows);
     sendCSV(res, "roadwise-dashboard-export.csv", csv);
@@ -240,8 +246,6 @@ app.get("/api/dashboard/export", async (req, res) => {
       success: false,
       message: "Failed to export dashboard data",
     });
-  } finally {
-    client?.release();
   }
 });
 
@@ -665,10 +669,35 @@ app.get("/api/trends", handleTrends);
 app.get("/api/analytics", handleTrends);
 
 // Hotspots API
+// Supports query params: city, dateRange
 app.get("/api/hotspots", async (req, res) => {
   try {
-    const totalCountRes = await pool.query("SELECT COUNT(*) AS total FROM accident");
-    const totalAccidents = Number(totalCountRes.rows[0].total) || 1;
+    const { city, dateRange } = req.query;
+
+    const conditions = [];
+    const params = [];
+
+    if (city && city.trim() !== "") {
+      params.push(city.trim());
+      conditions.push(`city ILIKE $${params.length}`);
+    }
+
+    if (dateRange && dateRange !== "All time") {
+      if (dateRange === "Last 30 days") {
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '30 days' FROM public.accident)");
+      } else if (dateRange === "Last 90 days") {
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '90 days' FROM public.accident)");
+      } else if (dateRange === "Last 12 months") {
+        conditions.push("date >= (SELECT MAX(date) - INTERVAL '12 months' FROM public.accident)");
+      } else if (dateRange === "Year to date") {
+        conditions.push("DATE_TRUNC('year', date) = DATE_TRUNC('year', (SELECT MAX(date) FROM public.accident))");
+      }
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const totalCountRes = await pool.query(`SELECT COUNT(*) AS total FROM accident ${whereClause}`, params);
+    const totalAccidents = Number(totalCountRes.rows[0]?.total) || 1;
 
     // Group by city and road_type to form geographical corridors/hotspots
     const clustersRes = await pool.query(`
@@ -682,9 +711,10 @@ app.get("/api/hotspots", async (req, res) => {
         COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END)::int AS fatal_count,
         ROUND(COUNT(CASE WHEN accident_severity = 'fatal' THEN 1 END) * 100.0 / COUNT(*), 1)::float AS fatal_rate
       FROM accident
+      ${whereClause}
       GROUP BY city, state, road_type
       ORDER BY incidents DESC
-    `);
+    `, params);
 
     const isValidLatLon = (lat, lon) => (
       Number.isFinite(lat) &&
@@ -708,6 +738,9 @@ app.get("/api/hotspots", async (req, res) => {
       if (c.longitude > maxLon) maxLon = c.longitude;
     });
 
+    const lonSpan = maxLon - minLon;
+    const latSpan = maxLat - minLat;
+
     const hotspots = clusters.map((c, i) => {
       // Risk calculation (0 - 100) based on volume and fatality rate
       const volumeScore = (c.incidents / maxClusterIncidents) * 50;
@@ -715,10 +748,8 @@ app.get("/api/hotspots", async (req, res) => {
       const risk = Math.min(Math.round(volumeScore + fatalScore), 99);
 
       // SVG map coordinates projection (latitude inverted for y-axis)
-      const lonSpan = (maxLon - minLon) || 1;
-      const latSpan = (maxLat - minLat) || 1;
-      const x = Math.round(15 + ((c.longitude - minLon) / lonSpan) * 70);
-      const y = Math.round(15 + ((maxLat - c.latitude) / latSpan) * 70);
+      const x = lonSpan === 0 || !Number.isFinite(lonSpan) ? 50 : Math.round(15 + ((c.longitude - minLon) / lonSpan) * 70);
+      const y = latSpan === 0 || !Number.isFinite(latSpan) ? 50 : Math.round(15 + ((maxLat - c.latitude) / latSpan) * 70);
 
       return {
         id: `H-${100 + i + 1}`,
